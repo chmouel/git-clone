@@ -152,12 +152,11 @@ spec:
         value: $(params.gitInitImage)
       - name: userHome
         value: $(params.userHome)
-      workspaces:
-        - name: output
-          workspace: output
-        - name: ssh-directory
-          workspace: ssh-directory
-        - name: basic-auth
-          workspace: basic-auth
-        - name: ssl-ca-directory
-          workspace: ssl-ca-directory
+      - name: output-path
+        value: $(workspaces.output.path)
+      - name: ssh-directory-path
+        value: $(workspaces.ssh-directory.path)
+      - name: basic-auth-path
+        value: $(workspaces.basic-auth.path)
+      - name: ssl-ca-directory-path
+        value: $(workspaces.ssl-ca-directory.path)

@@ -2,9 +2,38 @@ apiVersion: tekton.dev/v1alpha1
 kind: StepAction
 metadata:
   name: git-clone
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.54.0"
+    tekton.dev/categories: Git
+    tekton.dev/tags: git
+    tekton.dev/displayName: "git clone"
+    tekton.dev/platforms: "linux/amd64,linux/s390x,linux/ppc64le,linux/arm64"
 spec:
-  image: "$(params.gitInitImage)"
   params:
+    - name: output-path
+      description: The git repo will be cloned onto this path
+    - name: ssh-directory-path
+      description: |
+        A .ssh directory with private key, known_hosts, config, etc. Copied to
+        the user's home before git commands are executed. Used to authenticate
+        with the git remote when performing the clone. We recommend providing this
+        path from a workspace that is bound by a Secret over other volume types.
+      default: "no-path"
+    - name: basic-auth-path
+      description: |
+        A directory path containing a .gitconfig and .git-credentials file. These
+        will be copied to the user's home before any git commands are run. Any
+        other files in this directory are ignored. It is strongly recommended
+        to use ssh-directory over basic-auth whenever possible and to bind a
+        Secret to the Workspace providing this path over other volume types.
+      default: "no-path"
+    - name: ssl-ca-directory-path
+      description: |
+        A directory containing CA certificates, this will be used by Git to
+        verify the peer with when fetching or pushing over HTTPS.
+      default: "no-path"
     - name: url
       description: Repository URL to clone from.
       type: string
@@ -60,7 +89,7 @@ spec:
       type: string
       default: "true"
     - name: gitInitImage
-      description: The image providing the git-init binary that this Task runs.
+      description: The image providing the git-init binary that this StepAction runs.
       type: string
       default: "alpine/git"
     - name: userHome
@@ -68,92 +97,125 @@ spec:
         Absolute path to the user's home directory.
       type: string
       default: "/home/git"
-  workspaces:
-    - name: output
-      description: The git repo will be cloned onto the volume backing this Workspace.
-    - name: ssh-directory
-      optional: true
-      description: |
-        A .ssh directory with private key, known_hosts, config, etc. Copied to
-        the user's home before git commands are executed. Used to authenticate
-        with the git remote when performing the clone. Binding a Secret to this
-        Workspace is strongly recommended over other volume types.
-    - name: basic-auth
-      optional: true
-      description: |
-        A Workspace containing a .gitconfig and .git-credentials file. These
-        will be copied to the user's home before any git commands are run. Any
-        other files in this Workspace are ignored. It is strongly recommended
-        to use ssh-directory over basic-auth whenever possible and to bind a
-        Secret to this Workspace over other volume types.
-    - name: ssl-ca-directory
-      optional: true
-      description: |
-        A workspace containing CA certificates, this will be used by Git to
-        verify the peer with when fetching or pushing over HTTPS.
   results:
     - name: commit
-      description: The precise commit SHA that was fetched by this Task.
+      description: The precise commit SHA that was fetched by this StepAction.
     - name: url
-      description: The precise URL that was fetched by this Task.
+      description: The precise URL that was fetched by this StepAction.
     - name: committer-date
-      description: The epoch timestamp of the commit that was fetched by this Task.
+      description: The epoch timestamp of the commit that was fetched by this StepAction.
+  image: "$(params.gitInitImage)"
+  env:
+  - name: HOME
+    value: "$(params.userHome)"
+  - name: PARAM_URL
+    value: $(params.url)
+  - name: PARAM_REVISION
+    value: $(params.revision)
+  - name: PARAM_REFSPEC
+    value: $(params.refspec)
+  - name: PARAM_SUBMODULES
+    value: $(params.submodules)
+  - name: PARAM_DEPTH
+    value: $(params.depth)
+  - name: PARAM_SSL_VERIFY
+    value: $(params.sslVerify)
+  - name: PARAM_CRT_FILENAME
+    value: $(params.crtFileName)
+  - name: PARAM_SUBDIRECTORY
+    value: $(params.subdirectory)
+  - name: PARAM_DELETE_EXISTING
+    value: $(params.deleteExisting)
+  - name: PARAM_HTTP_PROXY
+    value: $(params.httpProxy)
+  - name: PARAM_HTTPS_PROXY
+    value: $(params.httpsProxy)
+  - name: PARAM_NO_PROXY
+    value: $(params.noProxy)
+  - name: PARAM_VERBOSE
+    value: $(params.verbose)
+  - name: PARAM_SPARSE_CHECKOUT_DIRECTORIES
+    value: $(params.sparseCheckoutDirectories)
+  - name: PARAM_USER_HOME
+    value: $(params.userHome)
+  - name: PARAM_OUTPUT_PATH
+    value: $(params.output-path)
+  - name: PARAM_SSH_DIRECTORY_PATH
+    value: $(params.ssh-directory-path)
+  - name: PARAM_BASIC_AUTH_DIRECTORY_PATH
+    value: $(params.basic-auth-path)
+  - name: PARAM_SSL_CA_DIRECTORY_PATH
+    value: $(params.ssl-ca-directory-path)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
   script: |
     #!/usr/bin/env sh
     set -eu
 
-    if [ "$(params.verbose)" = "true" ] ; then
+    if [ "${PARAM_VERBOSE}" = "true" ] ; then
       set -x
     fi
 
-    if [ "$(workspaces.basic-auth.bound)" = "true" ] ; then
-      cp "$(workspaces.basic-auth.path)/.git-credentials" "$(params.userHome)/.git-credentials"
-      cp "$(workspaces.basic-auth.path)/.gitconfig" "$(params.userHome)/.gitconfig"
-      chmod 400 "$(params.userHome)/.git-credentials"
-      chmod 400 "$(params.userHome)/.gitconfig"
+    if [ -n "${PARAM_BASIC_AUTH_DIRECTORY_PATH}" ] && [ "${PARAM_BASIC_AUTH_DIRECTORY_PATH}" != "no-path" ] ; then
+      cp "${PARAM_BASIC_AUTH_DIRECTORY_PATH}/.git-credentials" "${PARAM_USER_HOME}/.git-credentials"
+      cp "${PARAM_BASIC_AUTH_DIRECTORY_PATH}/.gitconfig" "${PARAM_USER_HOME}/.gitconfig"
+      chmod 400 "${PARAM_USER_HOME}/.git-credentials"
+      chmod 400 "${PARAM_USER_HOME}/.gitconfig"
     fi
 
-    if [ "$(workspaces.ssh-directory.bound)" = "true" ] ; then
-      cp -R "$(workspaces.ssh-directory.path)" "$(params.userHome)"/.ssh
-      chmod 700 "$(params.userHome)"/.ssh
-      chmod -R 400 "$(params.userHome)"/.ssh/*
+    if [ -n "${PARAM_SSH_DIRECTORY_PATH}" ] && [ "${PARAM_SSH_DIRECTORY_PATH}" != "no-path" ] ; then
+      cp -R "${PARAM_SSH_DIRECTORY_PATH}" "${PARAM_USER_HOME}"/.ssh
+      chmod 700 "${PARAM_USER_HOME}"/.ssh
+      chmod -R 400 "${PARAM_USER_HOME}"/.ssh/*
     fi
 
-    if [ "$(workspaces.ssl-ca-directory.bound)" = "true" ] ; then
-        export GIT_SSL_CAPATH="$(workspaces.ssl-ca-directory.path)"
-        if [ "$(params.crtFileName)" != "" ] ; then
-          export GIT_SSL_CAINFO="$(workspaces.ssl-ca-directory.path)/$(params.crtFileName)"
-        fi
+    if [ -n "${PARAM_SSL_CA_DIRECTORY_PATH}" ] && [ "${PARAM_SSL_CA_DIRECTORY_PATH}" != "no-path" ] ; then
+       export GIT_SSL_CAPATH="${PARAM_SSL_CA_DIRECTORY_PATH}"
+       if [ "${PARAM_CRT_FILENAME}" != "" ] ; then
+          export GIT_SSL_CAINFO="${PARAM_SSL_CA_DIRECTORY_PATH}/${PARAM_CRT_FILENAME}"
+       fi
     fi
-    CHECKOUT_DIR="$(workspaces.output.path)/$(params.subdirectory)"
+    CHECKOUT_DIR="${PARAM_OUTPUT_PATH}/${PARAM_SUBDIRECTORY}"
 
     cleandir() {
+      # Delete any existing contents of the repo directory if it exists.
+      #
+      # We don't just "rm -rf ${CHECKOUT_DIR}" because ${CHECKOUT_DIR} might be "/"
+      # or the root of a mounted volume.
       if [ -d "${CHECKOUT_DIR}" ] ; then
+        # Delete non-hidden files and directories
         rm -rf "${CHECKOUT_DIR:?}"/*
+        # Delete files and directories starting with . but excluding ..
         rm -rf "${CHECKOUT_DIR}"/.[!.]*
+        # Delete files and directories starting with .. plus any other character
         rm -rf "${CHECKOUT_DIR}"/..?*
       fi
     }
 
-    if [ "$(params.deleteExisting)" = "true" ] ; then
-      cleandir || true
+    if [ "${PARAM_DELETE_EXISTING}" = "true" ] ; then
+      if [ "${CHECKOUT_DIR}" = "/" ]; then
+        printf "Error: Refusing to delete root directory\n"
+        exit 1
+      fi
+      cleandir
     fi
 
-    test -z "$(params.httpProxy)" || export HTTP_PROXY="$(params.httpProxy)"
-    test -z "$(params.httpsProxy)" || export HTTPS_PROXY="$(params.httpsProxy)"
-    test -z "$(params.noProxy)" || export NO_PROXY="$(params.noProxy)"
+    test -z "${PARAM_HTTP_PROXY}" || export HTTP_PROXY="${PARAM_HTTP_PROXY}"
+    test -z "${PARAM_HTTPS_PROXY}" || export HTTPS_PROXY="${PARAM_HTTPS_PROXY}"
+    test -z "${PARAM_NO_PROXY}" || export NO_PROXY="${PARAM_NO_PROXY}"
 
-    if [ -d "$(params.userHome)/.ssh" ] && [ -n "${HOME}" ] && [ "${HOME}" != "$(params.userHome)" ]; then
-        ln -sf "$(params.userHome)/.ssh" "${HOME}/.ssh"
+    if [ -d "${PARAM_USER_HOME}/.ssh" ] && [ -n "${HOME}" ] && [ "${HOME}" != "${PARAM_USER_HOME}" ]; then
+        ln -sf "${PARAM_USER_HOME}/.ssh" "${HOME}/.ssh"
     fi
 
-    if [ "$(workspaces.ssh-directory.bound)" = "true" ] && (echo "$(params.url)" | grep -q "http://" || echo "$(params.url)" | grep -q "https://"); then
+    if [ -n "${PARAM_SSH_DIRECTORY_PATH}" ] && [ "${PARAM_SSH_DIRECTORY_PATH}" != "no-path" ] && (echo "${PARAM_URL}" | grep -q "http://" || echo "${PARAM_URL}" | grep -q "https://"); then
         echo "Warning: SSH credentials have been provided but the URL is not an SSH URL."
-    elif [ "$(workspaces.ssh-directory.bound)" = "false" ] && ! (echo "$(params.url)" | grep -q "http://" || echo "$(params.url)" | grep -q "https://"); then
+    elif ( [ -z "${PARAM_SSH_DIRECTORY_PATH}" ] || [ "${PARAM_SSH_DIRECTORY_PATH}" = "no-path" ] ) && ! (echo "${PARAM_URL}" | grep -q "http://" || echo "${PARAM_URL}" | grep -q "https://"); then
         echo "Warning: URL appears to be an SSH URL but no SSH credentials have been provided."
     fi
 
-    if [ -n "$(params.subdirectory)" ]; then
+    if [ -n "${PARAM_SUBDIRECTORY}" ]; then
         mkdir -p "${CHECKOUT_DIR}"
     fi
     cd "${CHECKOUT_DIR}"
@@ -161,37 +223,37 @@ spec:
     git config --global --add safe.directory "${CHECKOUT_DIR}"
 
     git init
-    git config http.sslVerify "$(params.sslVerify)"
+    git config http.sslVerify "${PARAM_SSL_VERIFY}"
 
-    if [ -n "$(params.sparseCheckoutDirectories)" ]; then
+    if [ -n "${PARAM_SPARSE_CHECKOUT_DIRECTORIES}" ]; then
         git config core.sparseCheckout true
-        echo "$(params.sparseCheckoutDirectories)" | tr ',' '\n' > .git/info/sparse-checkout
+        echo "${PARAM_SPARSE_CHECKOUT_DIRECTORIES}" | tr ',' '\n' > .git/info/sparse-checkout
     fi
 
     if git remote | grep -q "origin"; then
-        git remote set-url origin "$(params.url)"
+        git remote set-url origin "${PARAM_URL}"
     else
-        git remote add origin "$(params.url)"
+        git remote add origin "${PARAM_URL}"
     fi
 
-    if [ ! -f "$(params.userHome)/.ssh/known_hosts" ]; then
+    if [ ! -f "${PARAM_USER_HOME}/.ssh/known_hosts" ]; then
         git config core.sshCommand "ssh -o StrictHostKeyChecking=accept-new"
     fi
 
     FETCH_ARGS="--update-head-ok --force"
-    if [ "$(params.submodules)" = "true" ]; then
+    if [ "${PARAM_SUBMODULES}" = "true" ]; then
         FETCH_ARGS="${FETCH_ARGS} --recurse-submodules"
     fi
-    if [ "$(params.depth)" -gt 0 ]; then
-        FETCH_ARGS="${FETCH_ARGS} --depth=$(params.depth)"
+    if [ -n "${PARAM_DEPTH}" ] && [ "${PARAM_DEPTH}" -gt 0 ]; then
+        FETCH_ARGS="${FETCH_ARGS} --depth=${PARAM_DEPTH}"
     fi
 
     CHECKOUT_PARAM="FETCH_HEAD"
-    if [ -n "$(params.refspec)" ]; then
-        git fetch origin ${FETCH_ARGS} $(params.refspec)
-        CHECKOUT_PARAM="$(params.revision)"
+    if [ -n "${PARAM_REFSPEC}" ]; then
+        git fetch origin ${FETCH_ARGS} ${PARAM_REFSPEC}
+        CHECKOUT_PARAM="${PARAM_REVISION}"
     else
-        git fetch origin ${FETCH_ARGS} "$(params.revision)"
+        git fetch origin ${FETCH_ARGS} "${PARAM_REVISION}"
     fi
 
     if ! git rev-parse --verify --quiet "${CHECKOUT_PARAM}^{commit}" > /dev/null; then
@@ -201,7 +263,7 @@ spec:
 
     git checkout -f "${CHECKOUT_PARAM}"
 
-    if [ "$(params.submodules)" = "true" ]; then
+    if [ "${PARAM_SUBMODULES}" = "true" ]; then
         git submodule update --init --recursive
     fi
 
@@ -211,6 +273,6 @@ spec:
       exit "${EXIT_CODE}"
     fi
     RESULT_COMMITTER_DATE="$(git log -1 --pretty=%ct)"
-    printf "%s" "${RESULT_COMMITTER_DATE}" > "$(results.committer-date.path)"
-    printf "%s" "${RESULT_SHA}" > "$(results.commit.path)"
-    printf "%s" "$(params.url)" > "$(results.url.path)"
+    printf "%s" "${RESULT_COMMITTER_DATE}" > "$(step.results.committer-date.path)"
+    printf "%s" "${RESULT_SHA}" > "$(step.results.commit.path)"
+    printf "%s" "${PARAM_URL}" > "$(step.results.url.path)"
