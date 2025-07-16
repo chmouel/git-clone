@@ -102,7 +102,7 @@ spec:
     - name: gitInitImage
       description: The image providing the git-init binary that this Task runs.
       type: string
-      default: "alpine/git"
+      default: "registry.access.redhat.com/ubi10/s2i-base:10.0-1752526030"
     - name: userHome
       description: |
         Absolute path to the user's home directory.
@@ -120,43 +120,43 @@ spec:
       ref:
         name: git-clone
       params:
-      - name: url
-        value: $(params.url)
-      - name: revision
-        value: $(params.revision)
-      - name: refspec
-        value: $(params.refspec)
-      - name: submodules
-        value: $(params.submodules)
-      - name: depth
-        value: $(params.depth)
-      - name: sslVerify
-        value: $(params.sslVerify)
-      - name: crtFileName
-        value: $(params.crtFileName)
-      - name: subdirectory
-        value: $(params.subdirectory)
-      - name: sparseCheckoutDirectories
-        value: $(params.sparseCheckoutDirectories)
-      - name: deleteExisting
-        value: $(params.deleteExisting)
-      - name: httpProxy
-        value: $(params.httpProxy)
-      - name: httpsProxy
-        value: $(params.httpsProxy)
-      - name: noProxy
-        value: $(params.noProxy)
-      - name: verbose
-        value: $(params.verbose)
-      - name: gitInitImage
-        value: $(params.gitInitImage)
-      - name: userHome
-        value: $(params.userHome)
-      - name: output-path
-        value: $(workspaces.output.path)
-      - name: ssh-directory-path
-        value: $(workspaces.ssh-directory.path)
-      - name: basic-auth-path
-        value: $(workspaces.basic-auth.path)
-      - name: ssl-ca-directory-path
-        value: $(workspaces.ssl-ca-directory.path)
+        - name: url
+          value: $(params.url)
+        - name: revision
+          value: $(params.revision)
+        - name: refspec
+          value: $(params.refspec)
+        - name: submodules
+          value: $(params.submodules)
+        - name: depth
+          value: $(params.depth)
+        - name: sslVerify
+          value: $(params.sslVerify)
+        - name: crtFileName
+          value: $(params.crtFileName)
+        - name: subdirectory
+          value: $(params.subdirectory)
+        - name: sparseCheckoutDirectories
+          value: $(params.sparseCheckoutDirectories)
+        - name: deleteExisting
+          value: $(params.deleteExisting)
+        - name: httpProxy
+          value: $(params.httpProxy)
+        - name: httpsProxy
+          value: $(params.httpsProxy)
+        - name: noProxy
+          value: $(params.noProxy)
+        - name: verbose
+          value: $(params.verbose)
+        - name: gitInitImage
+          value: $(params.gitInitImage)
+        - name: userHome
+          value: $(params.userHome)
+        - name: output-path
+          value: $(workspaces.output.path)
+        - name: ssh-directory-path
+          value: $(workspaces.ssh-directory.path)
+        - name: basic-auth-path
+          value: $(workspaces.basic-auth.path)
+        - name: ssl-ca-directory-path
+          value: $(workspaces.ssl-ca-directory.path)
