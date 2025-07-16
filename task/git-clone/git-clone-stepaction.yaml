@@ -1,0 +1,216 @@
+apiVersion: tekton.dev/v1alpha1
+kind: StepAction
+metadata:
+  name: git-clone
+spec:
+  image: "$(params.gitInitImage)"
+  params:
+    - name: url
+      description: Repository URL to clone from.
+      type: string
+    - name: revision
+      description: Revision to checkout. (branch, tag, sha, ref, etc...)
+      type: string
+      default: ""
+    - name: refspec
+      description: Refspec to fetch before checking out revision.
+      default: ""
+    - name: submodules
+      description: Initialize and fetch git submodules.
+      type: string
+      default: "true"
+    - name: depth
+      description: Perform a shallow clone, fetching only the most recent N commits.
+      type: string
+      default: "1"
+    - name: sslVerify
+      description: Set the `http.sslVerify` global git config. Setting this to `false` is not advised unless you are sure that you trust your git remote.
+      type: string
+      default: "true"
+    - name: crtFileName
+      description: file name of mounted crt using ssl-ca-directory workspace. default value is ca-bundle.crt.
+      type: string
+      default: "ca-bundle.crt"
+    - name: subdirectory
+      description: Subdirectory inside the `output` Workspace to clone the repo into.
+      type: string
+      default: ""
+    - name: sparseCheckoutDirectories
+      description: Define the directory patterns to match or exclude when performing a sparse checkout.
+      type: string
+      default: ""
+    - name: deleteExisting
+      description: Clean out the contents of the destination directory if it already exists before cloning.
+      type: string
+      default: "true"
+    - name: httpProxy
+      description: HTTP proxy server for non-SSL requests.
+      type: string
+      default: ""
+    - name: httpsProxy
+      description: HTTPS proxy server for SSL requests.
+      type: string
+      default: ""
+    - name: noProxy
+      description: Opt out of proxying HTTP/HTTPS requests.
+      type: string
+      default: ""
+    - name: verbose
+      description: Log the commands that are executed during `git-clone`'s operation.
+      type: string
+      default: "true"
+    - name: gitInitImage
+      description: The image providing the git-init binary that this Task runs.
+      type: string
+      default: "alpine/git"
+    - name: userHome
+      description: |
+        Absolute path to the user's home directory.
+      type: string
+      default: "/home/git"
+  workspaces:
+    - name: output
+      description: The git repo will be cloned onto the volume backing this Workspace.
+    - name: ssh-directory
+      optional: true
+      description: |
+        A .ssh directory with private key, known_hosts, config, etc. Copied to
+        the user's home before git commands are executed. Used to authenticate
+        with the git remote when performing the clone. Binding a Secret to this
+        Workspace is strongly recommended over other volume types.
+    - name: basic-auth
+      optional: true
+      description: |
+        A Workspace containing a .gitconfig and .git-credentials file. These
+        will be copied to the user's home before any git commands are run. Any
+        other files in this Workspace are ignored. It is strongly recommended
+        to use ssh-directory over basic-auth whenever possible and to bind a
+        Secret to this Workspace over other volume types.
+    - name: ssl-ca-directory
+      optional: true
+      description: |
+        A workspace containing CA certificates, this will be used by Git to
+        verify the peer with when fetching or pushing over HTTPS.
+  results:
+    - name: commit
+      description: The precise commit SHA that was fetched by this Task.
+    - name: url
+      description: The precise URL that was fetched by this Task.
+    - name: committer-date
+      description: The epoch timestamp of the commit that was fetched by this Task.
+  script: |
+    #!/usr/bin/env sh
+    set -eu
+
+    if [ "$(params.verbose)" = "true" ] ; then
+      set -x
+    fi
+
+    if [ "$(workspaces.basic-auth.bound)" = "true" ] ; then
+      cp "$(workspaces.basic-auth.path)/.git-credentials" "$(params.userHome)/.git-credentials"
+      cp "$(workspaces.basic-auth.path)/.gitconfig" "$(params.userHome)/.gitconfig"
+      chmod 400 "$(params.userHome)/.git-credentials"
+      chmod 400 "$(params.userHome)/.gitconfig"
+    fi
+
+    if [ "$(workspaces.ssh-directory.bound)" = "true" ] ; then
+      cp -R "$(workspaces.ssh-directory.path)" "$(params.userHome)"/.ssh
+      chmod 700 "$(params.userHome)"/.ssh
+      chmod -R 400 "$(params.userHome)"/.ssh/*
+    fi
+
+    if [ "$(workspaces.ssl-ca-directory.bound)" = "true" ] ; then
+        export GIT_SSL_CAPATH="$(workspaces.ssl-ca-directory.path)"
+        if [ "$(params.crtFileName)" != "" ] ; then
+          export GIT_SSL_CAINFO="$(workspaces.ssl-ca-directory.path)/$(params.crtFileName)"
+        fi
+    fi
+    CHECKOUT_DIR="$(workspaces.output.path)/$(params.subdirectory)"
+
+    cleandir() {
+      if [ -d "${CHECKOUT_DIR}" ] ; then
+        rm -rf "${CHECKOUT_DIR:?}"/*
+        rm -rf "${CHECKOUT_DIR}"/.[!.]*
+        rm -rf "${CHECKOUT_DIR}"/..?*
+      fi
+    }
+
+    if [ "$(params.deleteExisting)" = "true" ] ; then
+      cleandir || true
+    fi
+
+    test -z "$(params.httpProxy)" || export HTTP_PROXY="$(params.httpProxy)"
+    test -z "$(params.httpsProxy)" || export HTTPS_PROXY="$(params.httpsProxy)"
+    test -z "$(params.noProxy)" || export NO_PROXY="$(params.noProxy)"
+
+    if [ -d "$(params.userHome)/.ssh" ] && [ -n "${HOME}" ] && [ "${HOME}" != "$(params.userHome)" ]; then
+        ln -sf "$(params.userHome)/.ssh" "${HOME}/.ssh"
+    fi
+
+    if [ "$(workspaces.ssh-directory.bound)" = "true" ] && (echo "$(params.url)" | grep -q "http://" || echo "$(params.url)" | grep -q "https://"); then
+        echo "Warning: SSH credentials have been provided but the URL is not an SSH URL."
+    elif [ "$(workspaces.ssh-directory.bound)" = "false" ] && ! (echo "$(params.url)" | grep -q "http://" || echo "$(params.url)" | grep -q "https://"); then
+        echo "Warning: URL appears to be an SSH URL but no SSH credentials have been provided."
+    fi
+
+    if [ -n "$(params.subdirectory)" ]; then
+        mkdir -p "${CHECKOUT_DIR}"
+    fi
+    cd "${CHECKOUT_DIR}"
+
+    git config --global --add safe.directory "${CHECKOUT_DIR}"
+
+    git init
+    git config http.sslVerify "$(params.sslVerify)"
+
+    if [ -n "$(params.sparseCheckoutDirectories)" ]; then
+        git config core.sparseCheckout true
+        echo "$(params.sparseCheckoutDirectories)" | tr ',' '\n' > .git/info/sparse-checkout
+    fi
+
+    if git remote | grep -q "origin"; then
+        git remote set-url origin "$(params.url)"
+    else
+        git remote add origin "$(params.url)"
+    fi
+
+    if [ ! -f "$(params.userHome)/.ssh/known_hosts" ]; then
+        git config core.sshCommand "ssh -o StrictHostKeyChecking=accept-new"
+    fi
+
+    FETCH_ARGS="--update-head-ok --force"
+    if [ "$(params.submodules)" = "true" ]; then
+        FETCH_ARGS="${FETCH_ARGS} --recurse-submodules"
+    fi
+    if [ "$(params.depth)" -gt 0 ]; then
+        FETCH_ARGS="${FETCH_ARGS} --depth=$(params.depth)"
+    fi
+
+    CHECKOUT_PARAM="FETCH_HEAD"
+    if [ -n "$(params.refspec)" ]; then
+        git fetch origin ${FETCH_ARGS} $(params.refspec)
+        CHECKOUT_PARAM="$(params.revision)"
+    else
+        git fetch origin ${FETCH_ARGS} "$(params.revision)"
+    fi
+
+    if ! git rev-parse --verify --quiet "${CHECKOUT_PARAM}^{commit}" > /dev/null; then
+        echo "Error: Unable to find commit ${CHECKOUT_PARAM}"
+        exit 1
+    fi
+
+    git checkout -f "${CHECKOUT_PARAM}"
+
+    if [ "$(params.submodules)" = "true" ]; then
+        git submodule update --init --recursive
+    fi
+
+    RESULT_SHA="$(git rev-parse HEAD)"
+    EXIT_CODE="$?"
+    if [ "${EXIT_CODE}" != 0 ] ; then
+      exit "${EXIT_CODE}"
+    fi
+    RESULT_COMMITTER_DATE="$(git log -1 --pretty=%ct)"
+    printf "%s" "${RESULT_COMMITTER_DATE}" > "$(results.committer-date.path)"
+    printf "%s" "${RESULT_SHA}" > "$(results.commit.path)"
+    printf "%s" "$(params.url)" > "$(results.url.path)"
